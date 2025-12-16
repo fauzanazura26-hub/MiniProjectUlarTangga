@@ -1,12 +1,28 @@
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.Path2D;
 import java.util.*;
 import java.util.List;
 import javax.sound.sampled.*;
 import java.net.URL;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import javax.imageio.ImageIO;
+
+
 public class SnakeLadder extends JFrame {
 
-    // ================== SOUND MANAGER (INNER CLASS) ==================
+    // Daftar nama Karakter yang tersedia (Tampilan)
+    private static final String[] POKEMON_NAMES = {"Bulbasaur", "Charmander", "Squirtle", "Pikachu"};
+    // Daftar Nama File Karakter (Harus sesuai dengan nama file di folder Char/)
+    private static final String[] POKEMON_FILES = {"bulbasaur.png", "charmander.png", "squirtle.png", "pikachu.png"};
+    // PATH IKON KARAKTER (Diperbaiki: Langsung menunjuk ke folder 'Char/')
+    private static final String CHARACTER_BASE_PATH = "Char/";
+
+
+    // ================== SOUND MANAGER ==================
     private static class SoundManager {
 
         private static Clip startClip;
@@ -15,10 +31,10 @@ public class SnakeLadder extends JFrame {
         private static Clip winnerClip;
 
         static {
-            startClip  = loadClip("Audio/start.wav");   // sound start game
-            bgmClip    = loadClip("Audio/backsound.wav");     // background music looping
-            diceClip   = loadClip("Audio/rollDice.wav");    // efek roll dice
-            winnerClip = loadClip("Audio/winner.wav");  // efek ketika menang
+            startClip  = loadClip("Audio/start.wav");
+            bgmClip    = loadClip("Audio/bgm.wav");
+            diceClip   = loadClip("Audio/dice.wav");
+            winnerClip = loadClip("Audio/winner.wav");
         }
 
         private static Clip loadClip(String resourceName) {
@@ -33,7 +49,6 @@ public class SnakeLadder extends JFrame {
                 clip.open(ais);
                 return clip;
             } catch (Exception e) {
-                System.err.println("Error loading sound: " + resourceName);
                 return null;
             }
         }
@@ -45,22 +60,10 @@ public class SnakeLadder extends JFrame {
             clip.start();
         }
 
-        // Sound: start game
-        public static void playGameStart() {
-            playOnce(startClip);
-        }
+        public static void playGameStart() { playOnce(startClip); }
+        public static void playDice()      { playOnce(diceClip); }
+        public static void playWinner()    { playOnce(winnerClip); }
 
-        // Sound: roll dice
-        public static void playDice() {
-            playOnce(diceClip);
-        }
-
-        // Sound: winner
-        public static void playWinner() {
-            playOnce(winnerClip);
-        }
-
-        // BGM: mulai looping
         public static void playBGM() {
             if (bgmClip == null) return;
             if (bgmClip.isRunning()) return;
@@ -68,27 +71,24 @@ public class SnakeLadder extends JFrame {
             bgmClip.loop(Clip.LOOP_CONTINUOUSLY);
         }
 
-        // BGM: stop
         public static void stopBGM() {
-            if (bgmClip != null && bgmClip.isRunning()) {
-                bgmClip.stop();
-            }
+            if (bgmClip != null && bgmClip.isRunning()) bgmClip.stop();
         }
     }
 
     // ================== KONFIGURASI BOARD ==================
     private static final int BOARD_SIZE = 64;
-    private static final int ROWS = 8;
-    private static final int COLS = 8;
-    private static final Dimension BOARD_DIM = new Dimension(720, 720);
+    private static final Dimension BOARD_DIM = new Dimension(640, 680);
+    private static final String POSITION_FILE = "node_positions.txt";
+
 
     // ================== DATA GAME ==================
-    private List<Player> players = new ArrayList<>();
-    private Queue<Player> turnQueue = new ArrayDeque<>();
-    private Player currentPlayer;
+    private List<BoardEditor.Player> players = new ArrayList<>();
+    private Queue<BoardEditor.Player> turnQueue = new ArrayDeque<>();
+    private BoardEditor.Player currentPlayer;
 
-    private BoardGraph board;
-    private Dice dice;
+    private BoardEditor.BoardGraph board;
+    private BoardEditor.Dice dice;
 
     private boolean gameOver = false;
 
@@ -99,7 +99,16 @@ public class SnakeLadder extends JFrame {
     private int moveInitialPos;
     private int currentDiceNumber;
     private boolean currentDicePositive;
-    private boolean useShortestThisRoll; // aktif kalau posisi awal prima & dadu hijau
+    private boolean useShortestThisRoll;
+
+    // --------- SKOR NODE & PLAYER -----------
+    private int[] nodeScores = new int[BOARD_SIZE + 1];
+    private boolean[] nodeClaimed = new boolean[BOARD_SIZE + 1];
+    private Map<BoardEditor.Player, Integer> playerScores = new HashMap<>();
+    private Random scoreRandom = new Random();
+
+    // --------- RANDOM ANIMASI DADU -----------
+    private Random diceAnimRandom = new Random();
 
     // ================== KOMPONEN GUI ==================
     private BoardPanel boardPanel;
@@ -110,6 +119,7 @@ public class SnakeLadder extends JFrame {
     private JButton btnReset;
     private JTextArea historyArea;
     private DicePanel dicePanel;
+    private JTextArea leaderboardArea;
 
     // ================== MAIN ==================
     public static void main(String[] args) {
@@ -117,31 +127,26 @@ public class SnakeLadder extends JFrame {
     }
 
     public SnakeLadder() {
-        setTitle("Snake & Ladder - Wooden Edition (Animated, 8x8)");
+        setTitle("Snake & Ladder - Pirate Map Edition");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setResizable(false);
+        setResizable(true);
 
         initGame();
         initUI();
 
         pack();
-        setMinimumSize(new Dimension(BOARD_DIM.width + 420, BOARD_DIM.height + 80));
+        setMinimumSize(new Dimension(BOARD_DIM.width + 380, BOARD_DIM.height + 80));
         setLocationRelativeTo(null);
 
-        // SOUND: mulai game + nyalakan BGM
         SoundManager.playGameStart();
         SoundManager.playBGM();
     }
 
-    // ================== UTIL: PRIMA & BINTANG ==================
+    // ================== UTIL: PRIMA & BINTANG (PUBLIC STATIC) ==================
 
-    /** Posisi bintang: setiap kelipatan 5 (5, 10, ..., 64) */
-    private boolean isStarPosition(int n) {
-        return n > 0 && n % 5 == 0;
-    }
+    public static boolean isStarPosition(int n) { return n > 0 && n % 5 == 0; }
 
-    /** Cek bilangan prima (untuk prime boost) */
-    private static boolean isPrime(int n) {
+    public static boolean isPrime(int n) {
         if (n <= 1) return false;
         if (n <= 3) return true;
         if (n % 2 == 0 || n % 3 == 0) return false;
@@ -151,31 +156,93 @@ public class SnakeLadder extends JFrame {
         return true;
     }
 
+    // ================== SKOR NODE & PLAYER ==================
+
+    private void initScores() {
+        for (int i = 1; i <= BOARD_SIZE; i++) {
+            nodeScores[i] = 5 + scoreRandom.nextInt(16); // 5..20
+            nodeClaimed[i] = false;
+        }
+        nodeScores[1] = 0;
+    }
+
+    private int getScore(BoardEditor.Player p) {
+        return playerScores.getOrDefault(p, 0);
+    }
+
+    private String buildScoreBoardText() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Skor Akhir:\n\n");
+        for (BoardEditor.Player p : players) {
+            sb.append(p.name)
+                    .append(" : ")
+                    .append(getScore(p))
+                    .append("\n");
+        }
+        return sb.toString();
+    }
+
+    private void updateLeaderboard() {
+        if (leaderboardArea == null) return;
+        StringBuilder sb = new StringBuilder();
+        sb.append("Leaderboard:\n\n");
+
+        List<BoardEditor.Player> sorted = new ArrayList<>(players);
+        sorted.sort((a, b) -> Integer.compare(getScore(b), getScore(a)));
+
+        int rank = 1;
+        for (BoardEditor.Player p : sorted) {
+            sb.append(rank)
+                    .append(". ")
+                    .append(p.name)
+                    .append("  | Skor: ")
+                    .append(getScore(p))
+                    .append("  | Pos: ")
+                    .append(p.position)
+                    .append("\n");
+            rank++;
+        }
+        leaderboardArea.setText(sb.toString());
+    }
+
     // ================== CUSTOM DIALOGS ==================
 
     private int showPlayerCountDialog() {
-        JDialog dialog = new JDialog(this, "Jumlah Pemain", true);
-        dialog.setSize(350, 200);
+        // ... (Kode dialog Jumlah Pemain - Versi Pokemon)
+        JDialog dialog = new JDialog(this, "Pilih Pemain", true);
+        dialog.setSize(380, 220);
         dialog.setLayout(new BorderLayout());
-        dialog.getContentPane().setBackground(new Color(70, 40, 20));
+
+        // Skema Warna Pokémon
+        Color bgColor = new Color(220, 20, 60); // Merah (Poké Ball)
+        Color fgColor = Color.WHITE;
+        Color panelColor = new Color(255, 255, 255, 200); // Putih semi-transparan
+
+        dialog.getContentPane().setBackground(bgColor);
         dialog.setLocationRelativeTo(this);
 
-        JLabel label = new JLabel("Masukkan jumlah pemain (2 - 4):");
-        label.setForeground(new Color(255, 240, 210));
-        label.setFont(new Font("Monospaced", Font.BOLD, 14));
+        JLabel label = new JLabel("Pilih Jumlah Pemain (2 - 4):");
+        label.setForeground(fgColor);
+        label.setFont(new Font("Arial", Font.BOLD, 18));
         label.setHorizontalAlignment(SwingConstants.CENTER);
+        label.setBorder(BorderFactory.createEmptyBorder(15, 10, 10, 10));
 
-        JTextField field = new JTextField();
-        field.setFont(new Font("Monospaced", Font.PLAIN, 14));
-        field.setBackground(new Color(150, 110, 70));
-        field.setForeground(new Color(255, 245, 225));
-        field.setBorder(BorderFactory.createLineBorder(new Color(110, 70, 40), 2));
+        // Field dan Button Panel
+        JPanel inputPanel = new JPanel(new FlowLayout());
+        inputPanel.setBackground(new Color(255, 255, 255, 0));
 
-        JButton ok = new JButton("OK");
-        ok.setFont(new Font("Monospaced", Font.BOLD, 14));
-        ok.setBackground(new Color(120, 80, 50));
+        JTextField field = new JTextField("2", 3);
+        field.setFont(new Font("Arial", Font.PLAIN, 18));
+        field.setHorizontalAlignment(SwingConstants.CENTER);
+        field.setBackground(panelColor);
+        field.setBorder(BorderFactory.createLineBorder(new Color(50, 50, 50), 2));
+
+        JButton ok = new JButton("MULAI");
+        ok.setFont(new Font("Arial", Font.BOLD, 14));
+        ok.setBackground(new Color(50, 50, 50)); // Abu-abu gelap/hitam
         ok.setForeground(Color.WHITE);
-        ok.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 70), 2));
+        ok.setBorder(BorderFactory.createLineBorder(new Color(255, 255, 255), 2));
+        ok.setPreferredSize(new Dimension(100, 40));
 
         final int[] result = {0};
 
@@ -185,64 +252,102 @@ public class SnakeLadder extends JFrame {
                 if (val >= 2 && val <= 4) {
                     result[0] = val;
                     dialog.dispose();
+                } else {
+                    JOptionPane.showMessageDialog(dialog, "Masukkan angka antara 2 dan 4.", "Kesalahan Input", JOptionPane.ERROR_MESSAGE);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+                JOptionPane.showMessageDialog(dialog, "Input tidak valid.", "Kesalahan Input", JOptionPane.ERROR_MESSAGE);
+            }
         });
 
-        dialog.add(label, BorderLayout.NORTH);
-        dialog.add(field, BorderLayout.CENTER);
+        inputPanel.add(field);
+        inputPanel.add(Box.createHorizontalStrut(20));
+        inputPanel.add(ok);
 
-        JPanel bottom = new JPanel();
-        bottom.setBackground(new Color(70, 40, 20));
-        bottom.add(ok);
-        dialog.add(bottom, BorderLayout.SOUTH);
+        dialog.add(label, BorderLayout.NORTH);
+        dialog.add(inputPanel, BorderLayout.CENTER);
 
         dialog.setVisible(true);
         return result[0];
     }
 
+    // ----------------------------------------------------
+    // REVISI DIALOG 2: Pemilihan Karakter Pokémon (dengan Gambar)
+    // ----------------------------------------------------
     private List<String> showPlayerNamesDialog(int count) {
-        JDialog dialog = new JDialog(this, "Nama Pemain", true);
-        dialog.setLayout(new BorderLayout());
-        dialog.getContentPane().setBackground(new Color(70, 40, 20));
 
-        JPanel fieldPanel = new JPanel();
-        fieldPanel.setLayout(new GridLayout(count, 1, 10, 10));
-        fieldPanel.setBackground(new Color(70, 40, 20));
-        JTextField[] fields = new JTextField[count];
+        JDialog dialog = new JDialog(this, "Pilih Karakter Pokémon", true);
+        dialog.setLayout(new BorderLayout());
+
+        // Skema Warna Pokémon
+        Color bgColor = new Color(40, 120, 255); // Biru (Air)
+        Color fgColor = Color.YELLOW; // Kontras
+
+        dialog.getContentPane().setBackground(bgColor);
+
+        JPanel selectionPanel = new JPanel();
+        selectionPanel.setLayout(new GridLayout(count, 2, 15, 15));
+        selectionPanel.setBackground(bgColor);
+        selectionPanel.setBorder(BorderFactory.createEmptyBorder(20, 30, 20, 30));
+
+        JComboBox<String>[] selectors = new JComboBox[count];
+
+        // Item Renderer untuk menampilkan gambar di JComboBox
+        PokemonRenderer renderer = new PokemonRenderer(POKEMON_NAMES, POKEMON_FILES, CHARACTER_BASE_PATH);
 
         for (int i = 0; i < count; i++) {
-            JTextField tf = new JTextField("Player " + (i + 1));
-            tf.setFont(new Font("Monospaced", Font.PLAIN, 14));
-            tf.setBackground(new Color(150, 110, 70));
-            tf.setForeground(new Color(255, 245, 225));
-            tf.setBorder(BorderFactory.createLineBorder(new Color(110, 70, 40), 2));
-            fields[i] = tf;
-            fieldPanel.add(tf);
+            JLabel lbl = new JLabel("Pemain " + (i + 1) + " Pilih:");
+            lbl.setForeground(fgColor);
+            lbl.setFont(new Font("Arial", Font.BOLD, 14));
+
+            JComboBox<String> cb = new JComboBox<>(POKEMON_NAMES);
+            cb.setRenderer(renderer);
+            cb.setFont(new Font("Arial", Font.PLAIN, 14));
+            cb.setBackground(Color.WHITE);
+            cb.setPreferredSize(new Dimension(150, 40));
+            selectors[i] = cb;
+
+            selectionPanel.add(lbl);
+            selectionPanel.add(cb);
         }
 
-        JButton ok = new JButton("Mulai");
-        ok.setFont(new Font("Monospaced", Font.BOLD, 14));
-        ok.setBackground(new Color(120, 80, 50));
-        ok.setForeground(Color.WHITE);
-        ok.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 70), 2));
+        JButton ok = new JButton("MULAI PERMAINAN");
+        ok.setFont(new Font("Arial", Font.BOLD, 14));
+        ok.setBackground(Color.YELLOW);
+        ok.setForeground(new Color(50, 50, 50));
+        ok.setBorder(BorderFactory.createLineBorder(new Color(50, 50, 50), 2));
+        ok.setPreferredSize(new Dimension(200, 45));
 
-        List<String> names = new ArrayList<>();
+
+        List<String> selectedNames = new ArrayList<>();
 
         ok.addActionListener(e -> {
-            names.clear();
-            for (int i = 0; i < count; i++) {
-                String name = fields[i].getText().trim();
-                if (name.isEmpty()) name = "Player " + (i + 1);
-                names.add(name);
+            selectedNames.clear();
+            Set<String> chosen = new HashSet<>();
+
+            boolean allUnique = true;
+            for (JComboBox<String> selector : selectors) {
+                String name = (String) selector.getSelectedItem();
+                if (chosen.contains(name)) {
+                    allUnique = false;
+                    break;
+                }
+                chosen.add(name);
+                selectedNames.add(name);
             }
-            dialog.dispose();
+
+            if (!allUnique) {
+                JOptionPane.showMessageDialog(dialog, "Setiap pemain harus memilih Pokémon yang berbeda!", "Kesalahan Pilihan", JOptionPane.ERROR_MESSAGE);
+                selectedNames.clear();
+            } else {
+                dialog.dispose();
+            }
         });
 
-        dialog.add(fieldPanel, BorderLayout.CENTER);
+        dialog.add(selectionPanel, BorderLayout.CENTER);
 
         JPanel bottom = new JPanel();
-        bottom.setBackground(new Color(70, 40, 20));
+        bottom.setBackground(bgColor);
         bottom.add(ok);
         dialog.add(bottom, BorderLayout.SOUTH);
 
@@ -250,12 +355,60 @@ public class SnakeLadder extends JFrame {
         dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
 
-        return names;
+        return selectedNames.isEmpty() ? List.of() : selectedNames;
     }
 
-    private void showEndGameDialog(String winnerName) {
+    // ====================================================================
+    // KELAS HELPER BARU: Renderer untuk JComboBox
+    // ====================================================================
+    private class PokemonRenderer extends DefaultListCellRenderer {
+        private String[] displayNames;
+        private Map<String, ImageIcon> iconCache = new HashMap<>();
+
+        public PokemonRenderer(String[] displayNames, String[] fileNames, String basePath) {
+            this.displayNames = displayNames;
+
+            for (int i = 0; i < displayNames.length; i++) {
+                // Path menggunakan nama file dari array POKEMON_FILES
+                String path = basePath + fileNames[i];
+
+                try {
+                    Image image = ImageIO.read(new File(path));
+
+                    if (image != null) {
+                        Image scaledImage = image.getScaledInstance(32, 32, Image.SCALE_SMOOTH);
+                        iconCache.put(displayNames[i], new ImageIcon(scaledImage));
+                    } else {
+                        System.err.println("Gagal memuat ikon Pokémon (Image is NULL): " + path);
+                        iconCache.put(displayNames[i], null);
+                    }
+
+                } catch (IOException e) {
+                    System.err.println("Gagal memuat ikon Pokémon (IOException): " + path);
+                    iconCache.put(displayNames[i], null);
+                }
+            }
+        }
+
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+
+            if (value != null) {
+                String name = (String) value;
+                label.setText(" " + name);
+                label.setIcon(iconCache.get(name));
+                label.setHorizontalAlignment(LEFT);
+            }
+            return label;
+        }
+    }
+
+
+    private void showEndGameDialog(String winnerName, String scoreBoardText) {
+        // ... (Kode showEndGameDialog)
         JDialog dialog = new JDialog(this, "Game Selesai", true);
-        dialog.setSize(350, 200);
+        dialog.setSize(380, 260);
         dialog.setLayout(new BorderLayout());
         dialog.getContentPane().setBackground(new Color(70, 40, 20));
         dialog.setLocationRelativeTo(this);
@@ -265,6 +418,16 @@ public class SnakeLadder extends JFrame {
         label.setFont(new Font("Monospaced", Font.BOLD, 18));
         label.setHorizontalAlignment(SwingConstants.CENTER);
 
+        JTextArea scoreArea = new JTextArea(scoreBoardText);
+        scoreArea.setEditable(false);
+        scoreArea.setBackground(new Color(110, 70, 40));
+        scoreArea.setForeground(new Color(255, 245, 220));
+        scoreArea.setFont(new Font("Monospaced", Font.PLAIN, 13));
+        scoreArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        JScrollPane scroll = new JScrollPane(scoreArea);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+
         JButton ok = new JButton("OK");
         ok.setFont(new Font("Monospaced", Font.BOLD, 14));
         ok.setBackground(new Color(120, 80, 50));
@@ -272,7 +435,8 @@ public class SnakeLadder extends JFrame {
         ok.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 70), 2));
         ok.addActionListener(e -> dialog.dispose());
 
-        dialog.add(label, BorderLayout.CENTER);
+        dialog.add(label, BorderLayout.NORTH);
+        dialog.add(scroll, BorderLayout.CENTER);
 
         JPanel bottom = new JPanel();
         bottom.setBackground(new Color(70, 40, 20));
@@ -289,25 +453,33 @@ public class SnakeLadder extends JFrame {
         if (nPlayers == 0) System.exit(0);
 
         List<String> names = showPlayerNamesDialog(nPlayers);
+        if (names.isEmpty()) System.exit(0);
 
         Color[] tokenColors = {
-                new Color(80, 200, 255),
-                new Color(255, 230, 80),
-                new Color(255, 120, 180),
-                new Color(120, 255, 120)
+                new Color(80, 200, 255), // Biru Muda
+                new Color(255, 230, 80),  // Kuning
+                new Color(255, 120, 180), // Pink
+                new Color(120, 255, 120)  // Hijau
         };
 
         players.clear();
         turnQueue.clear();
 
         for (int i = 0; i < nPlayers; i++) {
-            Player p = new Player(names.get(i), tokenColors[i]);
+            // Menggunakan BoardEditor.Player
+            BoardEditor.Player p = new BoardEditor.Player(names.get(i), tokenColors[i]);
             players.add(p);
             turnQueue.offer(p);
         }
 
-        board = new BoardGraph(BOARD_SIZE);
-        dice = new Dice();
+        // Menggunakan BoardEditor.BoardGraph dan Dice
+        board = new BoardEditor.BoardGraph(BOARD_SIZE);
+        dice = new BoardEditor.Dice();
+
+        playerScores.clear();
+        for (BoardEditor.Player p : players) playerScores.put(p, 0);
+
+        initScores();
 
         currentPlayer = turnQueue.poll();
     }
@@ -315,15 +487,16 @@ public class SnakeLadder extends JFrame {
     // ================== RESET GAME STATE ==================
 
     private void resetGameState() {
+        // ... (Kode resetGameState)
         if (moveTimer != null && moveTimer.isRunning()) moveTimer.stop();
 
-        for (Player p : players) {
+        for (BoardEditor.Player p : players) {
             p.position = 1;
             p.moveHistory.clear();
         }
 
         turnQueue.clear();
-        for (Player p : players) turnQueue.offer(p);
+        for (BoardEditor.Player p : players) turnQueue.offer(p);
         currentPlayer = turnQueue.poll();
 
         gameOver = false;
@@ -332,28 +505,32 @@ public class SnakeLadder extends JFrame {
         lblDiceText.setText("Dadu: -");
         lblDiceText.setForeground(new Color(240, 220, 190));
         lblStatus.setText("Status: Game di-reset.");
-        lblTurn.setText("Giliran: " + currentPlayer.name + "  (Posisi: " + currentPlayer.position + ")");
+
+        playerScores.clear();
+        for (BoardEditor.Player p : players) playerScores.put(p, 0);
+        initScores();
 
         historyArea.setText("");
-        appendHistory("Game di-reset. Board: 1.." + BOARD_SIZE + " (zig-zag dari bawah).");
+        appendHistory("Game di-reset. Peta bajak laut 1..64.");
         appendHistory("Giliran pertama: " + currentPlayer.name + ".");
 
+        updateTurnLabel();
+        updateLeaderboard();
         boardPanel.repaint();
 
-        // SOUND: start game lagi setelah reset
         SoundManager.playGameStart();
     }
 
     // ================== INIT UI ==================
 
-    private void initUI() {
+    public void initUI() { // DIUBAH MENJADI PUBLIC
+        // ... (Kode initUI)
         boardPanel = new BoardPanel();
 
         JPanel boardWrapper = new JPanel(new GridBagLayout());
         boardWrapper.setBackground(new Color(70, 40, 20));
         boardWrapper.setPreferredSize(BOARD_DIM);
         boardWrapper.setMinimumSize(BOARD_DIM);
-        boardWrapper.setMaximumSize(BOARD_DIM);
         boardWrapper.add(boardPanel);
 
         JPanel controlPanel = new JPanel();
@@ -361,7 +538,6 @@ public class SnakeLadder extends JFrame {
         controlPanel.setLayout(new BoxLayout(controlPanel, BoxLayout.Y_AXIS));
         controlPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         controlPanel.setPreferredSize(new Dimension(380, BOARD_DIM.height));
-        controlPanel.setMinimumSize(new Dimension(380, BOARD_DIM.height));
 
         lblTurn = new JLabel();
         lblTurn.setForeground(new Color(255, 245, 220));
@@ -373,6 +549,19 @@ public class SnakeLadder extends JFrame {
         lblDiceText = new JLabel("Dadu: -");
         lblDiceText.setForeground(new Color(240, 220, 190));
         lblDiceText.setFont(new Font("Monospaced", Font.BOLD, 14));
+
+        JLabel lblLeaderboard = new JLabel("Leaderboard:");
+        lblLeaderboard.setForeground(new Color(255, 245, 220));
+        lblLeaderboard.setFont(new Font("Monospaced", Font.BOLD, 13));
+
+        leaderboardArea = new JTextArea(5, 22);
+        leaderboardArea.setEditable(false);
+        leaderboardArea.setBackground(new Color(150, 110, 70));
+        leaderboardArea.setForeground(new Color(255, 245, 225));
+        leaderboardArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        leaderboardArea.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        leaderboardArea.setLineWrap(true);
+        leaderboardArea.setWrapStyleWord(true);
 
         lblStatus = new JLabel("Status: Game dimulai.");
         lblStatus.setForeground(new Color(240, 220, 190));
@@ -409,14 +598,16 @@ public class SnakeLadder extends JFrame {
         JScrollPane scrollHistory = new JScrollPane(historyArea);
         scrollHistory.setAlignmentX(Component.LEFT_ALIGNMENT);
         scrollHistory.setPreferredSize(new Dimension(340, 260));
-        scrollHistory.setMinimumSize(new Dimension(340, 260));
-        scrollHistory.setMaximumSize(new Dimension(340, 260));
 
         controlPanel.add(lblTurn);
         controlPanel.add(Box.createVerticalStrut(10));
         controlPanel.add(dicePanel);
         controlPanel.add(Box.createVerticalStrut(5));
         controlPanel.add(lblDiceText);
+        controlPanel.add(Box.createVerticalStrut(8));
+        controlPanel.add(lblLeaderboard);
+        controlPanel.add(Box.createVerticalStrut(2));
+        controlPanel.add(leaderboardArea);
         controlPanel.add(Box.createVerticalStrut(10));
         controlPanel.add(lblStatus);
         controlPanel.add(Box.createVerticalStrut(10));
@@ -436,11 +627,13 @@ public class SnakeLadder extends JFrame {
         setContentPane(root);
 
         updateTurnLabel();
-        appendHistory("Game dimulai. Board: 1.." + BOARD_SIZE + " (zig-zag dari bawah).");
+        updateLeaderboard();
+        appendHistory("Game dimulai. Peta bajak laut 1..64.");
         appendHistory("Giliran pertama: " + currentPlayer.name + ".");
     }
 
     private void appendHistory(String text) {
+        // ... (Kode appendHistory)
         historyArea.append(text + "\n");
         historyArea.setCaretPosition(historyArea.getDocument().getLength());
     }
@@ -448,11 +641,37 @@ public class SnakeLadder extends JFrame {
     // ================== EVENT: ROLL DICE ==================
 
     private void onRollDice() {
+        // ... (Kode onRollDice)
         if (gameOver) return;
         if (moveTimer != null && moveTimer.isRunning()) return;
-
         if (currentPlayer == null) currentPlayer = turnQueue.poll();
+        if (!boardPanel.positionsLoaded) {
+            lblStatus.setText("Status: ERROR - Posisi Node Belum Dimuat! Jalankan Editor.");
+            return;
+        }
 
+        btnRoll.setEnabled(false);
+
+        final int[] ticks = {0};
+        final int maxTicks = 10;
+
+        javax.swing.Timer rollAnimTimer = new javax.swing.Timer(80, null);
+        rollAnimTimer.addActionListener(ev -> {
+            ticks[0]++;
+            int fakeVal = diceAnimRandom.nextInt(6) + 1;
+            boolean fakePos = diceAnimRandom.nextBoolean();
+            dicePanel.setDice(fakeVal, fakePos);
+
+            if (ticks[0] >= maxTicks) {
+                rollAnimTimer.stop();
+                doRealDiceRoll();
+            }
+        });
+        rollAnimTimer.start();
+    }
+
+    private void doRealDiceRoll() {
+        // ... (Kode doRealDiceRoll)
         int diceNumber = dice.rollNumber();
         boolean positive = dice.isPositive();
 
@@ -466,9 +685,7 @@ public class SnakeLadder extends JFrame {
                 (useShortestThisRoll ? " | PRIME BOOST: Shortest Path" : ""));
         lblDiceText.setForeground(positive ? new Color(210, 250, 200) : new Color(255, 190, 170));
 
-        // Suara roll dice
         SoundManager.playDice();
-
         dicePanel.setDice(diceNumber, positive);
 
         startAnimatedMove(diceNumber, positive);
@@ -477,7 +694,7 @@ public class SnakeLadder extends JFrame {
     // ================== ANIMASI GERAK ==================
 
     private void startAnimatedMove(int diceNumber, boolean positive) {
-        btnRoll.setEnabled(false);
+        // ... (Kode startAnimatedMove)
         stepsLeft = diceNumber;
         movePositive = positive;
         moveInitialPos = currentPlayer.position;
@@ -512,6 +729,7 @@ public class SnakeLadder extends JFrame {
     }
 
     private void finishMoveAfterAnimation() {
+        // ... (Kode finishMoveAfterAnimation)
         int posAfterMove = currentPlayer.position;
 
         StringBuilder historyText = new StringBuilder();
@@ -537,24 +755,36 @@ public class SnakeLadder extends JFrame {
         int finalPos = currentPlayer.position;
         boolean gotStar = isStarPosition(finalPos);
 
+        if (!nodeClaimed[finalPos] && nodeScores[finalPos] > 0) {
+            nodeClaimed[finalPos] = true;
+            int gained = nodeScores[finalPos];
+            int newTotal = getScore(currentPlayer) + gained;
+            playerScores.put(currentPlayer, newTotal);
+
+            String scoreMsg = " | SCORE: +" + gained + " (total " + newTotal + ")";
+            status += scoreMsg;
+            historyText.append(scoreMsg);
+        }
+
         if (gotStar && finalPos < BOARD_SIZE) {
             status += " ★ BONUS! Posisi bintang (kelipatan 5), dapat giliran lagi.";
         }
 
         lblStatus.setText("Status: " + status);
-        historyText.append(status);
+        historyText.append(". ");
         appendHistory(historyText.toString());
 
         if (finalPos >= BOARD_SIZE) {
             gameOver = true;
             lblStatus.setText("Status: " + currentPlayer.name + " MENANG!");
-            appendHistory("🎉 " + currentPlayer.name + " MENANG! Mencapai kotak " + finalPos + ".");
+            appendHistory("🎉 " + currentPlayer.name + " MENANG! Mencapai node " + finalPos + ".");
 
-            // SOUND: stop BGM + play winner
+            String scoreBoard = buildScoreBoardText();
+
             SoundManager.stopBGM();
             SoundManager.playWinner();
 
-            showEndGameDialog(currentPlayer.name);
+            showEndGameDialog(currentPlayer.name, scoreBoard);
             btnRoll.setEnabled(false);
         } else {
             if (gotStar && finalPos < BOARD_SIZE) {
@@ -569,10 +799,12 @@ public class SnakeLadder extends JFrame {
         }
 
         updateTurnLabel();
+        updateLeaderboard();
         boardPanel.repaint();
     }
 
-    private int stepForward(BoardGraph board, Player player, boolean useShortest) {
+    private int stepForward(BoardEditor.BoardGraph board, BoardEditor.Player player, boolean useShortest) {
+        // ... (Kode stepForward)
         int pos = player.position;
         if (pos >= board.size) return pos;
         player.moveHistory.push(pos);
@@ -585,7 +817,8 @@ public class SnakeLadder extends JFrame {
         return newPos;
     }
 
-    private int stepBackward(Player player) {
+    private int stepBackward(BoardEditor.Player player) {
+        // ... (Kode stepBackward)
         if (player.moveHistory.isEmpty()) return player.position;
         int newPos = player.moveHistory.pop();
         player.position = newPos;
@@ -593,8 +826,11 @@ public class SnakeLadder extends JFrame {
     }
 
     private void updateTurnLabel() {
+        // ... (Kode updateTurnLabel)
         if (currentPlayer != null && !gameOver) {
-            lblTurn.setText("Giliran: " + currentPlayer.name + "  (Posisi: " + currentPlayer.position + ")");
+            lblTurn.setText("Giliran: " + currentPlayer.name +
+                    "  (Posisi: " + currentPlayer.position +
+                    ", Skor: " + getScore(currentPlayer) + ")");
         } else if (gameOver) {
             lblTurn.setText("Game selesai.");
         } else {
@@ -602,276 +838,270 @@ public class SnakeLadder extends JFrame {
         }
     }
 
-    // ================== PLAYER CLASS ==================
-
-    private static class Player {
-        String name;
-        int position;
-        Stack<Integer> moveHistory;
-        Color tokenColor;
-
-        Player(String name, Color color) {
-            this.name = name;
-            this.position = 1;
-            this.moveHistory = new Stack<>();
-            this.tokenColor = color;
-        }
-    }
-
-    // ================== DICE CLASS (LOGIC) ==================
-
-    private static class Dice {
-        private Random random = new Random();
-
-        int rollNumber() {
-            return random.nextInt(6) + 1;
-        }
-
-        boolean isPositive() {
-            return random.nextDouble() < 0.7;
-        }
-    }
-
-    // ================== BOARD GRAPH ==================
-
-    private static class BoardGraph {
-        int size;
-        Map<Integer, List<Integer>> adjacency;
-        private Random rand = new Random();
-        private List<int[]> extraLinks = new ArrayList<>();
-
-        BoardGraph(int size) {
-            this.size = size;
-            this.adjacency = new HashMap<>();
-            buildGraph();
-            addRandomLinksUndirected(5); // 5 random links
-        }
-
-        // graph linear 1 -> 2 -> 3 -> ... -> size
-        private void buildGraph() {
-            for (int i = 1; i <= size; i++) {
-                List<Integer> neighbors = new ArrayList<>();
-                if (i < size) neighbors.add(i + 1);
-                adjacency.put(i, neighbors);
-            }
-        }
-
-        /**
-         * Tambah k random link UNDIRECTED dengan syarat:
-         * - a != b
-         * - |a - b| != 1 (bukan tetangga linear biasa)
-         * - tiap pasangan unik
-         * - SETIAP NODE hanya boleh muncul sekali di SEMUA extra links
-         */
-        private void addRandomLinksUndirected(int k) {
-            Set<String> usedPairs = new HashSet<>();
-            Set<Integer> usedNodes = new HashSet<>();
-
-            int attempts = 0;
-            int maxAttempts = k * 1000; // biar ga infinite loop
-
-            while (extraLinks.size() < k && attempts < maxAttempts) {
-                attempts++;
-
-                int a = rand.nextInt(size) + 1;
-                int b = rand.nextInt(size) + 1;
-                if (a == b) continue;
-
-                // node ini sudah dipakai di link lain? skip
-                if (usedNodes.contains(a) || usedNodes.contains(b)) continue;
-
-                // jangan edge tetangga linear biasa
-                if (Math.abs(a - b) == 1) continue;
-
-                int u = Math.min(a, b);
-                int v = Math.max(a, b);
-                String key = u + "-" + v;
-                if (usedPairs.contains(key)) continue;
-
-                adjacency.computeIfAbsent(a, z -> new ArrayList<>());
-                adjacency.computeIfAbsent(b, z -> new ArrayList<>());
-                if (!adjacency.get(a).contains(b)) adjacency.get(a).add(b);
-                if (!adjacency.get(b).contains(a)) adjacency.get(b).add(a);
-
-                extraLinks.add(new int[]{a, b});
-                usedPairs.add(key);
-                usedNodes.add(a);
-                usedNodes.add(b);
-            }
-        }
-
-        int getNextForward(int pos) {
-            List<Integer> neighbors = adjacency.get(pos);
-            if (neighbors == null || neighbors.isEmpty()) return pos;
-
-            int linear = pos + 1;
-            if (neighbors.contains(linear)) return linear;
-            return neighbors.get(0);
-        }
-
-        int getNextOnShortestPath(int pos) {
-            if (pos >= size) return pos;
-
-            int target = size;
-            int[] prev = new int[size + 1];
-            Arrays.fill(prev, -1);
-
-            Queue<Integer> q = new ArrayDeque<>();
-            boolean[] vis = new boolean[size + 1];
-
-            q.offer(pos);
-            vis[pos] = true;
-
-            while (!q.isEmpty()) {
-                int u = q.poll();
-                if (u == target) break;
-
-                List<Integer> nbrs = adjacency.getOrDefault(u, Collections.emptyList());
-                nbrs = new ArrayList<>(nbrs);
-                if (nbrs.contains(u + 1)) {
-                    nbrs.remove((Integer) (u + 1));
-                    nbrs.add(0, u + 1);
-                }
-
-                for (int v : nbrs) {
-                    if (v < 1 || v > size) continue;
-                    if (!vis[v]) {
-                        vis[v] = true;
-                        prev[v] = u;
-                        q.offer(v);
-                    }
-                }
-            }
-
-            if (prev[target] == -1) {
-                return Math.min(size, pos + 1);
-            }
-
-            int cur = target;
-            Deque<Integer> path = new ArrayDeque<>();
-            while (cur != -1) {
-                path.push(cur);
-                cur = prev[cur];
-            }
-            if (!path.isEmpty() && path.peek() == pos) path.pop();
-            if (path.isEmpty()) return Math.min(size, pos + 1);
-            return path.peek();
-        }
-
-        List<int[]> getExtraLinks() {
-            return extraLinks;
-        }
-    }
-
-
-    // ================== PANEL BOARD ==================
+    // ================== PANEL BOARD (PIRATE MAP) ==================
 
     private class BoardPanel extends JPanel {
 
+        private Point[] centers;
+        private boolean positionsLoaded = false;
+        private Image backgroundImage;
+        private final int nodeR = 10; // Node Radius Ditetapkan STATIS
+
         BoardPanel() {
+            // Background warna ini hanya sebagai fallback
             setBackground(new Color(70, 40, 20));
             setPreferredSize(BOARD_DIM);
             setMinimumSize(BOARD_DIM);
-            setMaximumSize(BOARD_DIM);
+
+            // PATH BACKGROUND PETA DIPERBAIKI: Langsung menunjuk ke 'Background Board/bgboard.png'
+            loadBackgroundImage("Background Board/bgboard.png");
+
+            // Coba memuat posisi node dari file
+            if (!loadNodePositions()) {
+                System.err.println("Gagal memuat posisi node dari " + POSITION_FILE + ". Jalur tidak bisa ditampilkan.");
+            }
         }
+
+        private void loadBackgroundImage(String path) {
+            try {
+                // Menggunakan ImageIO.read untuk pemuatan yang lebih handal
+                backgroundImage = ImageIO.read(new File(path));
+            } catch (IOException e) {
+                System.err.println("Gagal memuat background gambar dari jalur: " + path);
+                System.err.println("Pastikan file 'bgboard.png' ada di folder 'Background Board'.");
+                backgroundImage = null;
+            }
+        }
+
+
+        // Metode untuk memuat posisi node dari file
+        private boolean loadNodePositions() {
+            // ... (Kode loadNodePositions)
+            File file = new File(POSITION_FILE);
+            if (!file.exists()) {
+                positionsLoaded = false;
+                return false;
+            }
+
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                Point[] loadedCenters = new Point[BOARD_SIZE + 1];
+                loadedCenters[0] = new Point(0, 0);
+                String line;
+                int i = 1;
+                while ((line = reader.readLine()) != null && i <= BOARD_SIZE) {
+                    String[] parts = line.split(",");
+                    if (parts.length == 2) {
+                        loadedCenters[i] = new Point(Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim()));
+                        i++;
+                    }
+                }
+                if (i > BOARD_SIZE) {
+                    centers = loadedCenters;
+                    positionsLoaded = true;
+                    return true;
+                }
+            } catch (Exception e) {
+                positionsLoaded = false;
+                return false;
+            }
+            positionsLoaded = false;
+            return false;
+        }
+
 
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             int w = getWidth();
             int h = getHeight();
 
-            int margin = 30;
-            int boardWidth = w - 2 * margin;
-            int boardHeight = h - 2 * margin;
+            // ==================================================
+            // GAMBAR BACKGROUND DARI FILE
+            // ==================================================
+            if (backgroundImage != null) {
+                g2.drawImage(backgroundImage, 0, 0, w, h, this);
+            } else {
+                // Fallback jika gambar gagal dimuat
+                Color seaColor = new Color(20, 70, 110);
+                g2.setColor(seaColor);
+                g2.fillRect(0, 0, w, h);
+            }
+            // ==================================================
 
-            int cellW = boardWidth / COLS;
-            int cellH = boardHeight / ROWS;
+            if (!positionsLoaded || centers == null) {
+                g2.setColor(Color.RED);
+                g2.setFont(new Font("Monospaced", Font.BOLD, 18));
+                g2.drawString("ERROR: Posisi Node Belum Dimuat!", 50, h / 2);
+                g2.drawString("Jalankan BoardEditor.java dan Simpan", 50, h / 2 + 30);
+                g2.dispose();
+                return;
+            }
 
-            g2.setColor(new Color(90, 55, 30));
-            g2.fillRoundRect(margin - 10, margin - 10, boardWidth + 20, boardHeight + 20, 20, 20);
+            // nodeR sudah ditetapkan statis di deklarasi kelas
 
+            // Jalur normal: garis putih putus-putus
+            Stroke oldStroke = g2.getStroke();
+            g2.setColor(new Color(245, 245, 245, 220));
+            g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                    1f, new float[]{8f, 10f}, 0f));
+            for (int i = 1; i < BOARD_SIZE; i++) {
+                Point a = centers[i];
+                Point b = centers[i + 1];
+                g2.drawLine(a.x, a.y, b.x, b.y);
+            }
+
+            // Jalur shortcut: panah kuning (Tali Kapal/Peta Pintas)
+            g2.setColor(new Color(255, 220, 80));
+            g2.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            for (int[] e : board.getExtraLinks()) {
+                int aIdx = e[0];
+                int bIdx = e[1];
+                Point pa = centers[aIdx];
+                Point pb = centers[bIdx];
+                // arah dari yang lebih kecil ke lebih besar
+                if (aIdx > bIdx) {
+                    int t = aIdx; aIdx = bIdx; bIdx = t;
+                    Point tp = pa; pa = pb; pb = tp;
+                }
+                drawArrowLine(g2, pa, pb, nodeR + 4, 10);
+            }
+            g2.setStroke(oldStroke);
+
+            // Node, skor, bintang, prime
             Font numFont = new Font("Monospaced", Font.BOLD, 11);
-            g2.setFont(numFont);
+            Font scoreFont = new Font("Monospaced", Font.PLAIN, 9);
 
             for (int pos = 1; pos <= BOARD_SIZE; pos++) {
-                CellCoord coord = getCellCoord(pos, margin, cellW, cellH);
+                Point c = centers[pos];
+                int nx = c.x;
+                int ny = c.y;
 
-                int x = coord.x;
-                int y = coord.y;
-                int row = coord.rowFromTop;
-                int col = coord.col;
+                // node kayu
+                g2.setColor(new Color(140, 100, 60));
+                g2.fillOval(nx - nodeR, ny - nodeR, 2 * nodeR, 2 * nodeR);
 
-                if ((row + col) % 2 == 0)
-                    g2.setColor(new Color(210, 180, 130));
-                else
-                    g2.setColor(new Color(180, 140, 90));
-                g2.fillRect(x, y, cellW - 2, cellH - 2);
+                g2.setColor(new Color(235, 215, 175));
+                g2.fillOval(nx - (int) (nodeR * 0.7), ny - (int) (nodeR * 0.7),
+                        (int) (2 * nodeR * 0.7), (int) (2 * nodeR * 0.7));
 
-                g2.setColor(new Color(110, 70, 40));
-                g2.drawRect(x, y, cellW - 2, cellH - 2);
+                g2.setColor(new Color(90, 60, 35));
+                g2.drawOval(nx - nodeR, ny - nodeR, 2 * nodeR, 2 * nodeR);
 
+                // nomor node
+                g2.setFont(numFont);
                 g2.setColor(new Color(60, 35, 20));
-                String text = String.valueOf(pos);
+                String label = String.valueOf(pos);
                 FontMetrics fm = g2.getFontMetrics();
-                int tx = x + 2;
-                int ty = y + fm.getAscent() + 1;
-                g2.drawString(text, tx, ty);
+                int tw = fm.stringWidth(label);
+                int th = fm.getAscent();
+                g2.drawString(label, nx - tw / 2, ny + th / 3);
 
+                // skor
+                int nodeScore = nodeScores[pos];
+                if (nodeScore > 0 && !nodeClaimed[pos]) {
+                    g2.setFont(scoreFont);
+                    g2.setColor(new Color(20, 70, 30));
+                    String sText = "+" + nodeScore;
+                    g2.drawString(sText, nx - nodeR, ny + nodeR + 10);
+                }
+
+                // bintang
                 if (isStarPosition(pos)) {
-                    int starCx = x + cellW - cellW / 4;
-                    int starCy = y + cellH / 4;
-                    drawStar(g2, starCx, starCy, Math.min(cellW, cellH) / 6);
+                    drawStar(g2, nx + nodeR + 5, ny - nodeR - 3, Math.max(6, nodeR / 2));
                 }
 
+                // prime indicator (titik kompas kecil)
                 if (isPrime(pos)) {
-                    g2.setColor(new Color(190, 255, 190, 200));
-                    g2.fillOval(x + cellW - 10, y + cellH - 10, 6, 6);
+                    g2.setColor(new Color(255, 190, 0, 220));
+                    g2.fillOval(nx + nodeR - 4, ny + nodeR - 4, 6, 6);
                 }
             }
 
-            Stroke old = g2.getStroke();
-            g2.setColor(new Color(120, 200, 200));
-            g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
-                    1f, new float[]{10f, 7f}, 0f));
-            for (int[] e : board.getExtraLinks()) {
-                int a = e[0], b = e[1];
-                Point pa = getCellCenter(a, margin, cellW, cellH);
-                Point pb = getCellCenter(b, margin, cellW, cellH);
-                g2.drawLine(pa.x, pa.y, pb.x, pb.y);
-            }
-            g2.setStroke(old);
+            // Token pemain
+            int tokenR = nodeR + 2;
+            int offset = Math.max(3, tokenR / 2);
+            int tokenSize = (nodeR * 2) + 6;
 
-            int radius = Math.min(cellW, cellH) / 3;
-            int offsetStep = Math.max(3, radius / 2);
-
-            for (Player p : players) {
+            for (BoardEditor.Player p : players) {
                 int pos = Math.max(1, Math.min(BOARD_SIZE, p.position));
-                Point center = getCellCenter(pos, margin, cellW, cellH);
+                Point c = centers[pos];
+
+                // Cari ikon berdasarkan nama pemain (yang seharusnya adalah nama Pokémon)
+                Image playerIcon = getPlayerTokenImage(p.name, tokenSize);
 
                 int idx = players.indexOf(p);
-                int dx = (idx % 2) * offsetStep - offsetStep / 2;
-                int dy = (idx / 2) * offsetStep - offsetStep / 2;
+                // Offset agar token tidak bertumpuk
+                int dx = (idx % 2) * offset * 2 - offset;
+                int dy = (idx / 2) * offset * 2 - offset;
 
-                int cx = center.x + dx;
-                int cy = center.y + dy;
+                int cx = c.x + dx;
+                int cy = c.y + dy;
 
-                g2.setColor(p.tokenColor);
-                g2.fillOval(cx - radius / 2, cy - radius / 2, radius, radius);
+                int drawX = cx - tokenSize / 2;
+                int drawY = cy - tokenSize / 2;
 
-                g2.setColor(Color.BLACK);
-                g2.setStroke(new BasicStroke(1.5f));
-                g2.drawOval(cx - radius / 2, cy - radius / 2, radius, radius);
+                if (playerIcon != null) {
+                    g2.drawImage(playerIcon, drawX, drawY, tokenSize, tokenSize, this);
+
+                    // Gambar lingkaran highlight
+                    g2.setColor(p.tokenColor);
+                    g2.setStroke(new BasicStroke(2f));
+                    g2.drawOval(drawX, drawY, tokenSize, tokenSize);
+
+                } else {
+                    // Fallback: Gambar oval berwarna (seperti di kode awal)
+                    g2.setColor(p.tokenColor);
+                    g2.fillOval(cx - tokenR, cy - tokenR, 2 * tokenR, 2 * tokenR);
+
+                    g2.setColor(Color.BLACK);
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.drawOval(cx - tokenR, cy - tokenR, 2 * tokenR, 2 * tokenR);
+                }
             }
+
+            // Label START & FINISH
+            g2.setFont(new Font("Monospaced", Font.BOLD, 14));
+            g2.setColor(new Color(60, 35, 20)); // Coklat gelap
+            Point startP = centers[1];
+            Point endP = centers[BOARD_SIZE];
+
+            // START (Hanya Label di Node 1)
+            g2.drawString("START", startP.x - 20, startP.y + nodeR + 20);
+
+            // FINISH (Ikon Bintang Kemenangan)
+            drawStar(g2, endP.x, endP.y - 15, 15);
+            g2.drawString("FINISH", endP.x - 25, endP.y + nodeR + 20);
+
 
             g2.dispose();
         }
 
+        // --- METODE BARU: Mengambil gambar token pemain ---
+        private Image getPlayerTokenImage(String name, int size) {
+            // Kita harus melakukan pencarian nama file dari nama tampilan
+            for(int i = 0; i < POKEMON_NAMES.length; i++){
+                if(POKEMON_NAMES[i].equals(name)){
+                    // Path menggunakan konstanta global dan nama file
+                    String path = CHARACTER_BASE_PATH + POKEMON_FILES[i];
+                    try {
+                        Image image = ImageIO.read(new File(path));
+                        return image.getScaledInstance(size, size, Image.SCALE_SMOOTH);
+                    } catch (IOException e) {
+                        return null; // Gagal memuat, gunakan fallback
+                    }
+                }
+            }
+            return null;
+        }
+        // ------------------------------------------------------------------------------------------
+
+        // UTILITIES GAMBAR (Dipertahankan karena menggambar elemen game, bukan background)
+
         private void drawStar(Graphics2D g2, int cx, int cy, int r) {
+            // ... (Kode drawStar)
             g2.setColor(new Color(255, 215, 120));
             int points = 10;
             int[] xs = new int[points];
@@ -886,45 +1116,34 @@ public class SnakeLadder extends JFrame {
             g2.fillPolygon(xs, ys, points);
         }
 
-        private CellCoord getCellCoord(int pos, int margin, int cellW, int cellH) {
-            int index = pos - 1;
-            int logicalRowFromBottom = index / COLS;
-            int normalCol = index % COLS;
+        private void drawArrowLine(Graphics2D g2, Point from, Point to, int shrink, int headSize) {
+            // ... (Kode drawArrowLine)
+            double ang = Math.atan2(to.y - from.y, to.x - from.x);
 
-            int col;
-            if (logicalRowFromBottom % 2 == 0) col = normalCol;
-            else col = COLS - 1 - normalCol;
+            int x1 = from.x + (int) (Math.cos(ang) * shrink);
+            int y1 = from.y + (int) (Math.sin(ang) * shrink);
+            int x2 = to.x - (int) (Math.cos(ang) * shrink);
+            int y2 = to.y - (int) (Math.sin(ang) * shrink);
 
-            int rowFromTop = ROWS - 1 - logicalRowFromBottom;
+            g2.drawLine(x1, y1, x2, y2);
 
-            int x = margin + col * cellW;
-            int y = margin + rowFromTop * cellH;
+            int hx = x2;
+            int hy = y2;
+            int xL = hx - (int) (Math.cos(ang - Math.PI / 6) * headSize);
+            int yL = hy - (int) (Math.sin(ang - Math.PI / 6) * headSize);
+            int xR = hx - (int) (Math.cos(ang + Math.PI / 6) * headSize);
+            int yR = hy - (int) (Math.sin(ang + Math.PI / 6) * headSize);
 
-            return new CellCoord(x, y, rowFromTop, col);
-        }
-
-        private Point getCellCenter(int pos, int margin, int cellW, int cellH) {
-            CellCoord c = getCellCoord(pos, margin, cellW, cellH);
-            int cx = c.x + (cellW - 2) / 2;
-            int cy = c.y + (cellH - 2) / 2;
-            return new Point(cx, cy);
-        }
-
-        private class CellCoord {
-            int x, y, rowFromTop, col;
-            CellCoord(int x, int y, int rowFromTop, int col) {
-                this.x = x;
-                this.y = y;
-                this.rowFromTop = rowFromTop;
-                this.col = col;
-            }
+            int[] xs = {hx, xL, xR};
+            int[] ys = {hy, yL, yR};
+            g2.fillPolygon(xs, ys, 3);
         }
     }
 
     // ================== PANEL DADU ==================
 
     private static class DicePanel extends JPanel {
-
+        // ... (Kode DicePanel)
         private int value = 0;
         private boolean positive = true;
 
@@ -934,7 +1153,7 @@ public class SnakeLadder extends JFrame {
         private javax.swing.Timer bounceTimer;
 
         DicePanel() {
-            setPreferredSize(new Dimension(140, 140));
+            setPreferredSize(new Dimension(60, 60));
             setBackground(new Color(110, 70, 40));
         }
 
@@ -945,21 +1164,18 @@ public class SnakeLadder extends JFrame {
         }
 
         private void startShake() {
-            if (shakeTimer != null && shakeTimer.isRunning())
-                shakeTimer.stop();
-
-            if (bounceTimer != null && bounceTimer.isRunning())
-                bounceTimer.stop();
+            if (shakeTimer != null && shakeTimer.isRunning()) shakeTimer.stop();
+            if (bounceTimer != null && bounceTimer.isRunning()) bounceTimer.stop();
 
             shakeOffset = 0;
 
             shakeTimer = new javax.swing.Timer(30, e -> {
-                shakeOffset = (Math.random() - 0.5) * 14;
+                shakeOffset = (Math.random() - 0.5) * 8;
                 repaint();
             });
             shakeTimer.start();
 
-            javax.swing.Timer stopShake = new javax.swing.Timer(350, e -> {
+            javax.swing.Timer stopShake = new javax.swing.Timer(280, e -> {
                 shakeTimer.stop();
                 shakeOffset = 0;
                 startBounce();
@@ -969,10 +1185,8 @@ public class SnakeLadder extends JFrame {
         }
 
         private void startBounce() {
-            if (bounceTimer != null && bounceTimer.isRunning())
-                bounceTimer.stop();
-
-            scale = 1.6;
+            if (bounceTimer != null && bounceTimer.isRunning()) bounceTimer.stop();
+            scale = 1.4;
 
             bounceTimer = new javax.swing.Timer(30, e -> {
                 scale -= 0.07;
@@ -982,7 +1196,6 @@ public class SnakeLadder extends JFrame {
                 }
                 repaint();
             });
-
             bounceTimer.start();
         }
 
@@ -996,17 +1209,17 @@ public class SnakeLadder extends JFrame {
             int w = getWidth();
             int h = getHeight();
 
-            int size = (int) ((Math.min(w, h) - 20) * scale);
+            int size = (int) ((Math.min(w, h) - 14) * scale);
             int x = (w - size) / 2 + (int) shakeOffset;
             int y = (h - size) / 2;
 
             Color base = positive ? new Color(45, 160, 45) : new Color(200, 60, 60);
 
             g2.setColor(new Color(0, 0, 0, 80));
-            g2.fillRoundRect(x + 8, y + 10, size, size, 28, 28);
+            g2.fillRoundRect(x + 4, y + 6, size, size, 20, 20);
 
             g2.setColor(base);
-            g2.fillRoundRect(x, y, size, size, 28, 28);
+            g2.fillRoundRect(x, y, size, size, 20, 20);
 
             g2.setColor(Color.WHITE);
             int r = size / 9;
