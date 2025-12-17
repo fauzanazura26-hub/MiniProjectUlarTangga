@@ -11,18 +11,16 @@ import java.io.FileReader;
 import java.io.IOException;
 import javax.imageio.ImageIO;
 
-
 public class SnakeLadder extends JFrame {
 
     // Daftar nama Karakter yang tersedia (Tampilan)
     private static final String[] POKEMON_NAMES = {"Bulbasaur", "Charmander", "Squirtle", "Pikachu"};
     // Daftar Nama File Karakter (Harus sesuai dengan nama file di folder Char/)
     private static final String[] POKEMON_FILES = {"bulbasaur.png", "charmander.png", "squirtle.png", "pikachu.png"};
-    // PATH IKON KARAKTER (Diperbaiki: Langsung menunjuk ke folder 'Char/')
+    // PATH IKON KARAKTER
     private static final String CHARACTER_BASE_PATH = "Char/";
 
-
-    // ================== SOUND MANAGER ==================
+    // ================== SOUND MANAGER (UPDATED) ==================
     private static class SoundManager {
 
         private static Clip startClip;
@@ -74,6 +72,26 @@ public class SnakeLadder extends JFrame {
         public static void stopBGM() {
             if (bgmClip != null && bgmClip.isRunning()) bgmClip.stop();
         }
+
+        // --- FITUR BARU: PENGATUR VOLUME ---
+        public static void setBGMVolume(float decibels) {
+            if (bgmClip != null && bgmClip.isOpen()) {
+                try {
+                    FloatControl gainControl = (FloatControl) bgmClip.getControl(FloatControl.Type.MASTER_GAIN);
+
+                    // Mencegah error jika nilai melebihi batas hardware
+                    float min = gainControl.getMinimum();
+                    float max = gainControl.getMaximum();
+
+                    if (decibels < min) decibels = min;
+                    if (decibels > max) decibels = max;
+
+                    gainControl.setValue(decibels);
+                } catch (IllegalArgumentException e) {
+                    System.err.println("Volume control not supported for BGM.");
+                }
+            }
+        }
     }
 
     // ================== KONFIGURASI BOARD ==================
@@ -120,6 +138,8 @@ public class SnakeLadder extends JFrame {
     private JTextArea historyArea;
     private DicePanel dicePanel;
     private JTextArea leaderboardArea;
+    // Komponen Volume Baru
+    private JSlider volSlider;
 
     // ================== MAIN ==================
     public static void main(String[] args) {
@@ -140,6 +160,9 @@ public class SnakeLadder extends JFrame {
 
         SoundManager.playGameStart();
         SoundManager.playBGM();
+
+        // Set volume awal agak pelan agar nyaman (-10 dB)
+        SoundManager.setBGMVolume(-10.0f);
     }
 
     // ================== UTIL: PRIMA & BINTANG (PUBLIC STATIC) ==================
@@ -208,15 +231,13 @@ public class SnakeLadder extends JFrame {
     // ================== CUSTOM DIALOGS ==================
 
     private int showPlayerCountDialog() {
-        // ... (Kode dialog Jumlah Pemain - Versi Pokemon)
         JDialog dialog = new JDialog(this, "Pilih Pemain", true);
         dialog.setSize(380, 220);
         dialog.setLayout(new BorderLayout());
 
-        // Skema Warna Pokémon
-        Color bgColor = new Color(220, 20, 60); // Merah (Poké Ball)
+        Color bgColor = new Color(220, 20, 60);
         Color fgColor = Color.WHITE;
-        Color panelColor = new Color(255, 255, 255, 200); // Putih semi-transparan
+        Color panelColor = new Color(255, 255, 255, 200);
 
         dialog.getContentPane().setBackground(bgColor);
         dialog.setLocationRelativeTo(this);
@@ -227,7 +248,6 @@ public class SnakeLadder extends JFrame {
         label.setHorizontalAlignment(SwingConstants.CENTER);
         label.setBorder(BorderFactory.createEmptyBorder(15, 10, 10, 10));
 
-        // Field dan Button Panel
         JPanel inputPanel = new JPanel(new FlowLayout());
         inputPanel.setBackground(new Color(255, 255, 255, 0));
 
@@ -239,7 +259,7 @@ public class SnakeLadder extends JFrame {
 
         JButton ok = new JButton("MULAI");
         ok.setFont(new Font("Arial", Font.BOLD, 14));
-        ok.setBackground(new Color(50, 50, 50)); // Abu-abu gelap/hitam
+        ok.setBackground(new Color(50, 50, 50));
         ok.setForeground(Color.WHITE);
         ok.setBorder(BorderFactory.createLineBorder(new Color(255, 255, 255), 2));
         ok.setPreferredSize(new Dimension(100, 40));
@@ -271,17 +291,13 @@ public class SnakeLadder extends JFrame {
         return result[0];
     }
 
-    // ----------------------------------------------------
-    // REVISI DIALOG 2: Pemilihan Karakter Pokémon (dengan Gambar)
-    // ----------------------------------------------------
     private List<String> showPlayerNamesDialog(int count) {
 
         JDialog dialog = new JDialog(this, "Pilih Karakter Pokémon", true);
         dialog.setLayout(new BorderLayout());
 
-        // Skema Warna Pokémon
-        Color bgColor = new Color(40, 120, 255); // Biru (Air)
-        Color fgColor = Color.YELLOW; // Kontras
+        Color bgColor = new Color(40, 120, 255);
+        Color fgColor = Color.YELLOW;
 
         dialog.getContentPane().setBackground(bgColor);
 
@@ -292,7 +308,6 @@ public class SnakeLadder extends JFrame {
 
         JComboBox<String>[] selectors = new JComboBox[count];
 
-        // Item Renderer untuk menampilkan gambar di JComboBox
         PokemonRenderer renderer = new PokemonRenderer(POKEMON_NAMES, POKEMON_FILES, CHARACTER_BASE_PATH);
 
         for (int i = 0; i < count; i++) {
@@ -358,9 +373,6 @@ public class SnakeLadder extends JFrame {
         return selectedNames.isEmpty() ? List.of() : selectedNames;
     }
 
-    // ====================================================================
-    // KELAS HELPER BARU: Renderer untuk JComboBox
-    // ====================================================================
     private class PokemonRenderer extends DefaultListCellRenderer {
         private String[] displayNames;
         private Map<String, ImageIcon> iconCache = new HashMap<>();
@@ -369,7 +381,6 @@ public class SnakeLadder extends JFrame {
             this.displayNames = displayNames;
 
             for (int i = 0; i < displayNames.length; i++) {
-                // Path menggunakan nama file dari array POKEMON_FILES
                 String path = basePath + fileNames[i];
 
                 try {
@@ -406,7 +417,6 @@ public class SnakeLadder extends JFrame {
 
 
     private void showEndGameDialog(String winnerName, String scoreBoardText) {
-        // ... (Kode showEndGameDialog)
         JDialog dialog = new JDialog(this, "Game Selesai", true);
         dialog.setSize(380, 260);
         dialog.setLayout(new BorderLayout());
@@ -466,13 +476,11 @@ public class SnakeLadder extends JFrame {
         turnQueue.clear();
 
         for (int i = 0; i < nPlayers; i++) {
-            // Menggunakan BoardEditor.Player
             BoardEditor.Player p = new BoardEditor.Player(names.get(i), tokenColors[i]);
             players.add(p);
             turnQueue.offer(p);
         }
 
-        // Menggunakan BoardEditor.BoardGraph dan Dice
         board = new BoardEditor.BoardGraph(BOARD_SIZE);
         dice = new BoardEditor.Dice();
 
@@ -487,7 +495,6 @@ public class SnakeLadder extends JFrame {
     // ================== RESET GAME STATE ==================
 
     private void resetGameState() {
-        // ... (Kode resetGameState)
         if (moveTimer != null && moveTimer.isRunning()) moveTimer.stop();
 
         for (BoardEditor.Player p : players) {
@@ -523,8 +530,7 @@ public class SnakeLadder extends JFrame {
 
     // ================== INIT UI ==================
 
-    public void initUI() { // DIUBAH MENJADI PUBLIC
-        // ... (Kode initUI)
+    public void initUI() {
         boardPanel = new BoardPanel();
 
         JPanel boardWrapper = new JPanel(new GridBagLayout());
@@ -583,6 +589,26 @@ public class SnakeLadder extends JFrame {
         btnReset.setBorder(BorderFactory.createLineBorder(new Color(190, 120, 90), 2));
         btnReset.addActionListener(e -> resetGameState());
 
+        // ---- SETUP SLIDER VOLUME ----
+        JLabel lblVolume = new JLabel("Volume BGM:");
+        lblVolume.setForeground(new Color(240, 220, 190));
+        lblVolume.setFont(new Font("Monospaced", Font.BOLD, 13));
+
+        // Range: -50 dB (min) s/d 6 dB (max), awal -10 dB
+        volSlider = new JSlider(-50, 6, -10);
+        volSlider.setBackground(new Color(110, 70, 40));
+        volSlider.setOpaque(false);
+        volSlider.setPreferredSize(new Dimension(150, 20));
+        volSlider.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        volSlider.addChangeListener(e -> {
+            float val = volSlider.getValue();
+            // Jika slider mentok kiri, anggap mute (-80 dB)
+            if (val == -50) val = -80.0f;
+            SoundManager.setBGMVolume(val);
+        });
+        // -----------------------------
+
         JLabel lblHistory = new JLabel("Riwayat Langkah:");
         lblHistory.setForeground(new Color(255, 245, 220));
         lblHistory.setFont(new Font("Monospaced", Font.BOLD, 13));
@@ -619,6 +645,12 @@ public class SnakeLadder extends JFrame {
         controlPanel.add(Box.createVerticalStrut(5));
         controlPanel.add(btnReset);
 
+        // Tambahkan Komponen Slider ke Panel
+        controlPanel.add(Box.createVerticalStrut(15));
+        controlPanel.add(lblVolume);
+        controlPanel.add(Box.createVerticalStrut(5));
+        controlPanel.add(volSlider);
+
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(new Color(70, 40, 20));
         root.add(boardWrapper, BorderLayout.CENTER);
@@ -633,7 +665,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private void appendHistory(String text) {
-        // ... (Kode appendHistory)
         historyArea.append(text + "\n");
         historyArea.setCaretPosition(historyArea.getDocument().getLength());
     }
@@ -641,7 +672,6 @@ public class SnakeLadder extends JFrame {
     // ================== EVENT: ROLL DICE ==================
 
     private void onRollDice() {
-        // ... (Kode onRollDice)
         if (gameOver) return;
         if (moveTimer != null && moveTimer.isRunning()) return;
         if (currentPlayer == null) currentPlayer = turnQueue.poll();
@@ -671,7 +701,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private void doRealDiceRoll() {
-        // ... (Kode doRealDiceRoll)
         int diceNumber = dice.rollNumber();
         boolean positive = dice.isPositive();
 
@@ -694,7 +723,6 @@ public class SnakeLadder extends JFrame {
     // ================== ANIMASI GERAK ==================
 
     private void startAnimatedMove(int diceNumber, boolean positive) {
-        // ... (Kode startAnimatedMove)
         stepsLeft = diceNumber;
         movePositive = positive;
         moveInitialPos = currentPlayer.position;
@@ -729,7 +757,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private void finishMoveAfterAnimation() {
-        // ... (Kode finishMoveAfterAnimation)
         int posAfterMove = currentPlayer.position;
 
         StringBuilder historyText = new StringBuilder();
@@ -804,7 +831,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private int stepForward(BoardEditor.BoardGraph board, BoardEditor.Player player, boolean useShortest) {
-        // ... (Kode stepForward)
         int pos = player.position;
         if (pos >= board.size) return pos;
         player.moveHistory.push(pos);
@@ -818,7 +844,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private int stepBackward(BoardEditor.Player player) {
-        // ... (Kode stepBackward)
         if (player.moveHistory.isEmpty()) return player.position;
         int newPos = player.moveHistory.pop();
         player.position = newPos;
@@ -826,7 +851,6 @@ public class SnakeLadder extends JFrame {
     }
 
     private void updateTurnLabel() {
-        // ... (Kode updateTurnLabel)
         if (currentPlayer != null && !gameOver) {
             lblTurn.setText("Giliran: " + currentPlayer.name +
                     "  (Posisi: " + currentPlayer.position +
@@ -845,18 +869,15 @@ public class SnakeLadder extends JFrame {
         private Point[] centers;
         private boolean positionsLoaded = false;
         private Image backgroundImage;
-        private final int nodeR = 10; // Node Radius Ditetapkan STATIS
+        private final int nodeR = 10;
 
         BoardPanel() {
-            // Background warna ini hanya sebagai fallback
             setBackground(new Color(70, 40, 20));
             setPreferredSize(BOARD_DIM);
             setMinimumSize(BOARD_DIM);
 
-            // PATH BACKGROUND PETA DIPERBAIKI: Langsung menunjuk ke 'Background Board/bgboard.png'
             loadBackgroundImage("Background Board/bgboard.png");
 
-            // Coba memuat posisi node dari file
             if (!loadNodePositions()) {
                 System.err.println("Gagal memuat posisi node dari " + POSITION_FILE + ". Jalur tidak bisa ditampilkan.");
             }
@@ -864,7 +885,6 @@ public class SnakeLadder extends JFrame {
 
         private void loadBackgroundImage(String path) {
             try {
-                // Menggunakan ImageIO.read untuk pemuatan yang lebih handal
                 backgroundImage = ImageIO.read(new File(path));
             } catch (IOException e) {
                 System.err.println("Gagal memuat background gambar dari jalur: " + path);
@@ -873,10 +893,7 @@ public class SnakeLadder extends JFrame {
             }
         }
 
-
-        // Metode untuk memuat posisi node dari file
         private boolean loadNodePositions() {
-            // ... (Kode loadNodePositions)
             File file = new File(POSITION_FILE);
             if (!file.exists()) {
                 positionsLoaded = false;
@@ -918,18 +935,13 @@ public class SnakeLadder extends JFrame {
             int w = getWidth();
             int h = getHeight();
 
-            // ==================================================
-            // GAMBAR BACKGROUND DARI FILE
-            // ==================================================
             if (backgroundImage != null) {
                 g2.drawImage(backgroundImage, 0, 0, w, h, this);
             } else {
-                // Fallback jika gambar gagal dimuat
                 Color seaColor = new Color(20, 70, 110);
                 g2.setColor(seaColor);
                 g2.fillRect(0, 0, w, h);
             }
-            // ==================================================
 
             if (!positionsLoaded || centers == null) {
                 g2.setColor(Color.RED);
@@ -940,9 +952,6 @@ public class SnakeLadder extends JFrame {
                 return;
             }
 
-            // nodeR sudah ditetapkan statis di deklarasi kelas
-
-            // Jalur normal: garis putih putus-putus
             Stroke oldStroke = g2.getStroke();
             g2.setColor(new Color(245, 245, 245, 220));
             g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
@@ -953,7 +962,6 @@ public class SnakeLadder extends JFrame {
                 g2.drawLine(a.x, a.y, b.x, b.y);
             }
 
-            // Jalur shortcut: panah kuning (Tali Kapal/Peta Pintas)
             g2.setColor(new Color(255, 220, 80));
             g2.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             for (int[] e : board.getExtraLinks()) {
@@ -961,7 +969,6 @@ public class SnakeLadder extends JFrame {
                 int bIdx = e[1];
                 Point pa = centers[aIdx];
                 Point pb = centers[bIdx];
-                // arah dari yang lebih kecil ke lebih besar
                 if (aIdx > bIdx) {
                     int t = aIdx; aIdx = bIdx; bIdx = t;
                     Point tp = pa; pa = pb; pb = tp;
@@ -970,7 +977,6 @@ public class SnakeLadder extends JFrame {
             }
             g2.setStroke(oldStroke);
 
-            // Node, skor, bintang, prime
             Font numFont = new Font("Monospaced", Font.BOLD, 11);
             Font scoreFont = new Font("Monospaced", Font.PLAIN, 9);
 
@@ -979,7 +985,6 @@ public class SnakeLadder extends JFrame {
                 int nx = c.x;
                 int ny = c.y;
 
-                // node kayu
                 g2.setColor(new Color(140, 100, 60));
                 g2.fillOval(nx - nodeR, ny - nodeR, 2 * nodeR, 2 * nodeR);
 
@@ -990,7 +995,6 @@ public class SnakeLadder extends JFrame {
                 g2.setColor(new Color(90, 60, 35));
                 g2.drawOval(nx - nodeR, ny - nodeR, 2 * nodeR, 2 * nodeR);
 
-                // nomor node
                 g2.setFont(numFont);
                 g2.setColor(new Color(60, 35, 20));
                 String label = String.valueOf(pos);
@@ -999,7 +1003,6 @@ public class SnakeLadder extends JFrame {
                 int th = fm.getAscent();
                 g2.drawString(label, nx - tw / 2, ny + th / 3);
 
-                // skor
                 int nodeScore = nodeScores[pos];
                 if (nodeScore > 0 && !nodeClaimed[pos]) {
                     g2.setFont(scoreFont);
@@ -1008,19 +1011,16 @@ public class SnakeLadder extends JFrame {
                     g2.drawString(sText, nx - nodeR, ny + nodeR + 10);
                 }
 
-                // bintang
                 if (isStarPosition(pos)) {
                     drawStar(g2, nx + nodeR + 5, ny - nodeR - 3, Math.max(6, nodeR / 2));
                 }
 
-                // prime indicator (titik kompas kecil)
                 if (isPrime(pos)) {
                     g2.setColor(new Color(255, 190, 0, 220));
                     g2.fillOval(nx + nodeR - 4, ny + nodeR - 4, 6, 6);
                 }
             }
 
-            // Token pemain
             int tokenR = nodeR + 2;
             int offset = Math.max(3, tokenR / 2);
             int tokenSize = (nodeR * 2) + 6;
@@ -1029,11 +1029,9 @@ public class SnakeLadder extends JFrame {
                 int pos = Math.max(1, Math.min(BOARD_SIZE, p.position));
                 Point c = centers[pos];
 
-                // Cari ikon berdasarkan nama pemain (yang seharusnya adalah nama Pokémon)
                 Image playerIcon = getPlayerTokenImage(p.name, tokenSize);
 
                 int idx = players.indexOf(p);
-                // Offset agar token tidak bertumpuk
                 int dx = (idx % 2) * offset * 2 - offset;
                 int dy = (idx / 2) * offset * 2 - offset;
 
@@ -1046,13 +1044,11 @@ public class SnakeLadder extends JFrame {
                 if (playerIcon != null) {
                     g2.drawImage(playerIcon, drawX, drawY, tokenSize, tokenSize, this);
 
-                    // Gambar lingkaran highlight
                     g2.setColor(p.tokenColor);
                     g2.setStroke(new BasicStroke(2f));
                     g2.drawOval(drawX, drawY, tokenSize, tokenSize);
 
                 } else {
-                    // Fallback: Gambar oval berwarna (seperti di kode awal)
                     g2.setColor(p.tokenColor);
                     g2.fillOval(cx - tokenR, cy - tokenR, 2 * tokenR, 2 * tokenR);
 
@@ -1062,16 +1058,13 @@ public class SnakeLadder extends JFrame {
                 }
             }
 
-            // Label START & FINISH
             g2.setFont(new Font("Monospaced", Font.BOLD, 14));
-            g2.setColor(new Color(60, 35, 20)); // Coklat gelap
+            g2.setColor(new Color(60, 35, 20));
             Point startP = centers[1];
             Point endP = centers[BOARD_SIZE];
 
-            // START (Hanya Label di Node 1)
             g2.drawString("START", startP.x - 20, startP.y + nodeR + 20);
 
-            // FINISH (Ikon Bintang Kemenangan)
             drawStar(g2, endP.x, endP.y - 15, 15);
             g2.drawString("FINISH", endP.x - 25, endP.y + nodeR + 20);
 
@@ -1079,29 +1072,22 @@ public class SnakeLadder extends JFrame {
             g2.dispose();
         }
 
-        // --- METODE BARU: Mengambil gambar token pemain ---
         private Image getPlayerTokenImage(String name, int size) {
-            // Kita harus melakukan pencarian nama file dari nama tampilan
             for(int i = 0; i < POKEMON_NAMES.length; i++){
                 if(POKEMON_NAMES[i].equals(name)){
-                    // Path menggunakan konstanta global dan nama file
                     String path = CHARACTER_BASE_PATH + POKEMON_FILES[i];
                     try {
                         Image image = ImageIO.read(new File(path));
                         return image.getScaledInstance(size, size, Image.SCALE_SMOOTH);
                     } catch (IOException e) {
-                        return null; // Gagal memuat, gunakan fallback
+                        return null;
                     }
                 }
             }
             return null;
         }
-        // ------------------------------------------------------------------------------------------
-
-        // UTILITIES GAMBAR (Dipertahankan karena menggambar elemen game, bukan background)
 
         private void drawStar(Graphics2D g2, int cx, int cy, int r) {
-            // ... (Kode drawStar)
             g2.setColor(new Color(255, 215, 120));
             int points = 10;
             int[] xs = new int[points];
@@ -1117,7 +1103,6 @@ public class SnakeLadder extends JFrame {
         }
 
         private void drawArrowLine(Graphics2D g2, Point from, Point to, int shrink, int headSize) {
-            // ... (Kode drawArrowLine)
             double ang = Math.atan2(to.y - from.y, to.x - from.x);
 
             int x1 = from.x + (int) (Math.cos(ang) * shrink);
@@ -1143,7 +1128,6 @@ public class SnakeLadder extends JFrame {
     // ================== PANEL DADU ==================
 
     private static class DicePanel extends JPanel {
-        // ... (Kode DicePanel)
         private int value = 0;
         private boolean positive = true;
 
