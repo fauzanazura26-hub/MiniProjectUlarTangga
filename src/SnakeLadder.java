@@ -179,7 +179,6 @@ public class SnakeLadder extends JFrame {
         return true;
     }
 
-    // ================== SKOR NODE & PLAYER ==================
 
     private void initScores() {
         for (int i = 1; i <= BOARD_SIZE; i++) {
