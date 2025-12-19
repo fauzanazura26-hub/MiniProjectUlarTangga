@@ -147,7 +147,7 @@ public class SnakeLadder extends JFrame {
     }
 
     public SnakeLadder() {
-        setTitle("Snake & Ladder - Pirate Map Edition");
+        setTitle("Mini Project 1 (Snake N Ladders)");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setResizable(true);
 
